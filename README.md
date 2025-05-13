@@ -1,127 +1,91 @@
 # 📘 Tariff Sentiment Intelligence via Reddit & NLP
 
-This repository contains the end-to-end data pipeline and analysis framework used to quantify public sentiment around U.S. trade tariffs introduced under President Trump in 2025. The system ingests Reddit discussions, processes and scores sentiment, and generates insights using NLP and time-series modeling.
+## Project Overview
+
+This project implements an end-to-end data pipeline and analytics framework to monitor, quantify, and visualize public sentiment around the United States’ 2025 tariff policies under President Trump. By combining large-scale social media ingestion, distributed messaging, NLP sentiment scoring, and advanced topic/time-series modeling, the system delivers real-time insights and historical analyses for business risk sensing and strategic decision-making.
 
 ---
 
-## 🔍 Overview
+## Motivation
 
-This project leverages Reddit API, Confluent Kafka, Google Cloud Storage, and NLP techniques (VADER + RoBERTa) to monitor, classify, and analyze real-time social sentiment toward tariff policy. It is built for business intelligence teams and policy researchers interested in public reactions to economic events.
-
----
-
-## 🧱 Architecture Summary
-
-```mermaid
-graph TD
-  A[Reddit API (PRAW)] --> B[Local Batch JSON Files]
-  B --> C[Kafka Producer]
-  C --> D[Kafka Topic (raw-reddit-posts)]
-  D --> E[Python Consumer / Pandas Processing]
-  E --> F[Sentiment Layer (VADER & RoBERTa)]
-  F --> G[Kafka Topic (sentiment-output)]
-  F --> H[GCS (structured partitioned files)]
-  H --> I[LDA + Time Series Analysis]
-```
+In 2025, sweeping tariff increases on steel, aluminum, Chinese imports, and nearly all foreign goods triggered unprecedented market volatility, supply-chain disruptions, and consumer price pressures. Companies and policy analysts needed timely, data-driven indicators of public reaction—well ahead of traditional surveys or sales data—to adjust strategy, communications, and risk management. Reddit, with its high-volume, opinion-rich discussions, serves as a live laboratory for sentiment analysis and topic discovery.
 
 ---
 
-## 📂 Folder Structure
+## Pipeline & Architecture Overview
 
-```
-tariff-sentiment-pipeline/
-│
-├── ingestion/
-│   └── reddit_harvester.py        # Pulls posts/comments via PRAW
-│
-├── kafka/
-│   ├── producer.py                # Streams JSON to Kafka topic
-│   └── consumer_processing.py     # Processes messages, applies ETL
-│
-├── sentiment/
-│   └── sentiment_pipeline.py      # VADER + RoBERTa classification
-│
-├── storage/
-│   └── gcs_writer.py              # Writes enriched data to GCS
-│
-├── analysis/
-│   └── lda_time_series.ipynb      # Topic modeling + sentiment trend
-│
-├── notebooks/
-│   └── exploratory/               # Sample data inspections
-│
-└── config/
-    └── schema_registry.json       # Kafka JSON schema definition
-```
+Below is a concise description of each layer in the distributed, fault-tolerant pipeline. A high-level diagram is provided in the repo’s documentation.
+
+### 1. Data Ingestion  
+A scheduled Python script (using PRAW) runs every 15 minutes to fetch new Reddit posts and full comment threads matching tariff-related keywords. Batches are written as timestamped JSON files. A checkpoint mechanism records the last processed post ID to avoid duplicates and minimize API calls.
+
+### 2. Message Queue  
+After each batch file is saved locally, a lightweight Python **Kafka Producer** reads the file, serializes each post/comment as JSON, and publishes it to the `reddit-tariff-topic` on Confluent Cloud. The topic has six partitions and a one-week retention policy, ensuring scalable, durable buffering and enabling multiple downstream consumers to replay or parallelize processing.
+
+### 3. Data Processing (ETL)  
+A Python **Kafka Consumer** ingests messages, deserializes JSON, and loads them into a Pandas DataFrame. The ETL routines perform:
+- Field extraction (post/comment IDs, text, score, timestamps, depth)
+- Cleaning (remove deleted/bot content, filter by language/length)
+- Enrichment (convert UTC timestamps to ISO format, tag known policy events)
+
+Optional Spark Structured Streaming code is available for cluster-scale transformation.
+
+### 4. Sentiment Analysis  
+The cleaned DataFrame is fed into a hybrid NLP layer:
+- **VADER** computes a continuous compound score (–1 to +1) and basic positive/negative/neutral labels.
+- **RoBERTa** (transformer model) assigns nuanced categorical labels (e.g. Anger, Joy, Fear) to capture context and sarcasm.
+Results for each message—numeric score and categorical label—are appended back to the DataFrame and simultaneously published to a new Kafka topic (`tariff-sentiment-out`) for real-time dashboards.
+
+### 5. Storage & Distribution  
+Enriched data is written hourly to **Google Cloud Storage** in Parquet format, partitioned by date and data type (raw vs. processed). This GCS data lake supports historical replay, large-scale batch analysis, and integration with BI tools. Concurrently, Kafka retains recent seven days of messages for quick reprocessing or real-time subscription.
+
+### 6. Analysis & Insights  
+On the historical data in GCS:
+- **Topic Modeling (LDA)** reveals five dominant themes:  
+  1. Voting & Political Judgment  
+  2. Institutional & National Identity  
+  3. Executive Power & Trade Conflict  
+  4. Abstract Ideals & American Values  
+  5. Tariffs & Consumer Impact  
+- **Time-Series Sentiment** tracks daily average VADER scores and RoBERTa label distributions, overlaid with key tariff announcement dates to measure public reaction spikes and recovery patterns.
+- **Correlation & Drill-Down** merges sentiment indices with market data (e.g., retail stock returns) and segments by subreddit to identify early warning communities (investor vs. consumer forums) and topic-specific sentiment nuances.
 
 ---
 
-## 🧪 Sample Output (Schema)
+## Data Description
 
+**Sample Size**  
+- **Posts:** ~245 unique submissions  
+- **Comments:** 12,495 individual comments  
+
+**Variables**  
+- `post_id`, `title`, `selftext`, `score`, `created_utc`  
+- `comment_id`, `body`, `parent_id`, `depth`, `subreddit`  
+
+**Example JSON Record**  
 ```json
 {
-  "post_id": "abc123",
-  "title": "Trump raises tariffs again",
-  "body": "This is going to hurt consumers...",
-  "created_utc": 1738465409,
-  "subreddit": "politics",
-  "score": 524,
-  "vader_score": -0.72,
-  "roberta_label": "Negative",
-  "policy_event_tag": true
+  "post_id": "1ifnoig",
+  "title": "Trudeau announcing retaliatory tariffs on the United States",
+  "selftext": "",
+  "created_utc": 1738465409.0,
+  "score": 137589,
+  "comments": [
+    {
+      "comment_id": "mahs1qz",
+      "parent_id": "t1_mahq5kh",
+      "body": "Cause\n\n![gif](giphy|fstB58aVozghCu70FO|downsized)",
+      "score": 14550,
+      "created_utc": 1738466877.0,
+      "depth": 1
+    },
+    {
+      "comment_id": "mahuf30",
+      "parent_id": "t3_1ifnoig",
+      "body": "Trudeau's tariffs are only on a handful of specific products[...]",
+      "score": 14511,
+      "created_utc": 1738467690.0,
+      "depth": 0
+    }
+  ]
 }
-```
-
----
-
-## 📊 Key Technologies
-
-- **Reddit API (PRAW)** – Data source
-- **Apache Kafka (Confluent Cloud)** – Message queue
-- **Pandas / PySpark (ETL)** – Data processing
-- **VADER + RoBERTa** – Sentiment scoring
-- **Google Cloud Storage (GCS)** – Scalable storage
-- **LDA, Matplotlib, Seaborn** – Topic modeling & visualization
-
----
-
-## 📈 Results Summary
-
-- 245 Reddit threads (~12,500 comments) processed  
-- 5 major topics discovered via LDA  
-- Sentiment tracked over time against 4 key policy dates  
-- Negative sentiment spike detected ~24 hours before market downturns
-
----
-
-## 📌 How to Run
-
-1. Set your Reddit API credentials in `config/reddit_credentials.json`
-2. Run the batch harvester:
-   ```bash
-   python ingestion/reddit_harvester.py
-   ```
-3. Start the Kafka producer to stream to topic:
-   ```bash
-   python kafka/producer.py
-   ```
-4. Launch sentiment processor and writer:
-   ```bash
-   python sentiment/sentiment_pipeline.py
-   ```
-5. Perform analysis in `analysis/lda_time_series.ipynb`
-
----
-
-## 🔒 License
-
-This project is released under the MIT License. Attribution welcome.
-
----
-
-## 🤝 Acknowledgements
-
-Built as part of BUDT 737: Enterprise Big Data project, University of Maryland, Spring 2025.  
-Special thanks to Prof. Tej Anand for guidance.
-
----
